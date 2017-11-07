@@ -1,15 +1,45 @@
 import json
 import os
+import errno
 import subprocess
 
+from jinja2 import Environment, FileSystemLoader
 
-def apply(config, root):
-    public_ip = config['public_ip']
-    public_host = config['public_host']
-    public_interfaces = config['public_interfaces']
+env = Environment(
+    loader=FileSystemLoader('templates'),
+    line_statement_prefix="!",
+)
+
+root = 'new'
+
+def render_template(src, dst, **kwargs):
+    dst = root + dst
+    try:
+        os.remove(dst)  # Remove it in case it's a symlink
+    except OSError:
+        pass  # If it doesn't exist, no worries.
+
+    try:
+        os.makedirs(os.path.dirname(dst))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+
+    kwargs['config'] = config
+
+    with open(dst, 'wt') as f:
+        res = env.get_template(src).render(**kwargs)
+        res = '\n'.join((l.strip() for l in res.split('\n')))
+        if res[-1:] != '\n':
+            res += '\n'
+        f.write(res)
+
+if __name__ == "__main__":
+    with open('config.json', 'r') as f:
+        config = json.load(f)
 
     # Check interface uses
-    ifaces={}
+    ifaces = {}
     for iface in config['interfaces']:
         t = iface['type']
         n = iface['name']
@@ -30,169 +60,31 @@ def apply(config, root):
         assert ifaces[network['interface']] == ''
         ifaces[network['interface']] = 'network'
 
-    # Create vlans
+    # VLAN stuff
     for name, use in ifaces.items():
         if use == 'vlan':
-            with open(root+'/etc/systemd/network/{}.network'.format(name), 'wt') as f:
-                f.write('[Match]\nName={}\n[Network]\n'.format(name))
-                for i in config['interfaces']:
-                    if i['type'] == 'vlan' and i['parent'] == name:
-                        f.write('VLAN={name}\n'.format(**i))
+            render_template('networkd/vlan.network', '/etc/systemd/network/{}.network'.format(name), interface={'name': name})
+    for interface in config['interfaces']:
+        if interface['type'] == 'vlan':
+            render_template('networkd/vlan.netdev', '/etc/systemd/network/{}.netdev'.format(interface['name']), interface=interface)
 
-    for i in config['interfaces']:
-        if i['type'] == 'vlan':
-            with open(root+'/etc/systemd/network/{}.netdev'.format(i['name']), 'wt') as f:
-                f.write('[NetDev]\nName={name}\nKind=vlan\n\n[VLAN]\nId={vlan}\n'.format(**i))
+    # PPP stuff
+    render_template('ppp/ppp@.service', '/etc/systemd/system/ppp@.service')
+    render_template('ppp/secrets', '/etc/ppp/pap-secrets')
+    render_template('ppp/secrets', '/etc/ppp/chap-secrets')
+    for interface in config['interfaces']:
+        if interface['type'] == 'pppoe':
+            render_template('ppp/peer', '/etc/ppp/peers/'+interface['name'], interface=interface)
 
-    # Configure ppp
-    with open(root+'/etc/systemd/system/ppp@.service', 'wt') as f:
-        f.write('''
-[Unit]
-Description=PPP link to %I
-Before=network.target
-
-[Service]
-ExecStart=/usr/bin/sh -c 'sleep 1 && /usr/sbin/pppd call %I nodetach nolog'
-RestartSec=10
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-''')
-
-    with open(root+'/etc/ppp/pap-secrets', 'wt') as f:
-        for i in config['interfaces']:
-            if i['type'] == 'pppoe':
-                f.write('{username} * {password}\n'.format(**i))
-    with open(root+'/etc/ppp/chap-secrets', 'wt') as f:
-        for i in config['interfaces']:
-            if i['type'] == 'pppoe':
-                f.write('{username} * {password}\n'.format(**i))
-
-    for i in config['interfaces']:
-        if i['type'] == 'pppoe':
-            with open(root+'/etc/ppp/peers/{name}'.format(**i), 'wt') as f:
-                f.write('''plugin rp-pppoe.so
-# rp_pppoe_ac 'your ac name'
-# rp_pppoe_service 'your service name'
-# network interface
-{parent}
-# login name
-name "{username}"
-usepeerdns
-persist
-# Uncomment this if you want to enable dial on demand
-#demand
-#idle 180
-defaultroute
-hide-password
-noauth
-'''.format(**i))
-
-
-    # build /etc/resolv.conf
-    try:
-        os.remove(root+'/etc/resolv.conf')  # Remove it in case it's a symlink
-    except OSError:
-        pass  # If it doesn't exist, no worries.
-
-    with open(root+'/etc/resolv.conf', 'wt') as f:
-        for ns in config['nameservers']:
-            f.write('nameserver {}\n'.format(ns))
-
-    # Build udev rules for interface naming
-    with open(root+'/etc/udev/rules.d/10-router.rules', 'wt') as f:
-        for iface in config['interfaces']:
-            if iface['type'] == 'hardware':
-                f.write('SUBSYSTEM=="net", ACTION=="add", ATTR{{address}}=="{mac}", NAME="{name}"\n'.format(**iface))
-
-
-    # Build network interface files
+    # NETWORKS
     for network in config['networks']:
-        with open(root+'/etc/systemd/network/{}.network'.format(network['interface']), 'wt') as f:
-            f.write('''
-[Match]
-Name={interface}
+        render_template('networkd/network', '/etc/systemd/network/{}.network'.format(network['interface']), network=network)
 
-[Network]
-IPForward=yes
+    render_template('udev.rules', '/etc/udev/rules.d/10-router.rules')
+    render_template('resolv.conf', '/etc/resolv.conf')
+    render_template('hosts', '/etc/hosts')
+    render_template('dnsmasq.conf', '/etc/dnsmasq.conf')
+    render_template('iptables.rules', '/etc/iptables/iptables.rules')
 
-[Address]
-Address={ip}/{range}
-'''.format(**network))
-            if network.get('gateway'):
-                f.write('''
-[Route]
-Gateway={gateway}
-'''.format(**network))
-
-    # Build hosts file
-    with open(root+'/etc/hosts', 'wt') as f:
-        f.write('127.0.0.1	localhost.localdomain	localhost\n')
-        f.write('::1		localhost.localdomain	localhost\n')
-        f.write('{} {}\n'.format(public_ip, public_host))
-
-        for network in config['networks']:
-            for host in network.get('hosts', []):
-                if host.get('name'):
-                    f.write("{host[ip]} {host[name]}\n".format(host=host))
-
-    # Build dnsmasq config
-    with open(root+'/etc/dnsmasq.conf', 'wt') as f:
-        with open('dnsmasq.conf', 'r') as tpl:
-            f.write(tpl.read())
-        for network in config['networks']:
-            if network.get('dhcp'):
-                f.write("dhcp-range={},{},1h\n".format(network['dhcp']['start'], network['dhcp']['end']))
-            for host in network.get('hosts', []):
-                if host.get('mac'):
-                    macs = host['mac']
-                    if isinstance(macs, str):
-                        macs = [macs]
-                    f.write("dhcp-host={macs},{host[ip]}\n".format(host=host, macs=','.join(macs)))
-
-
-    with open(root+'/etc/iptables/iptables.rules', 'wt') as f:
-
-        flt = ''
-        nat = ''
-
-        for network in config['networks']:
-            for host in network.get('hosts', []):
-                if host.get('ports'):
-                    for port in host['ports']:
-                        flt += '-A fw-open -d {host[ip]} -p {port[proto]} -m {port[proto]} --dport {port[dest]} -j ACCEPT\n'.format(host=host, port=port)
-                        nat += '-A INCOMING -p {port[proto]} -m {port[proto]} --dport {port[source]} -j DNAT --to-destination {host[ip]}:{port[dest]}\n'.format(host=host, port=port)
-                        nat += '-A POSTROUTING -d {host[ip]} -s {network[ip]}/{network[range]} -p {port[proto]} --dport {port[dest]} -j SNAT --to {network[ip]}\n'.format(network=network, host=host, port=port)
-
-        with open('iptables-filter.rules', 'r') as tpl:
-            f.write(tpl.read())
-        f.write(flt)
-        for network in config['networks']:
-            if network.get('nat'):
-                f.write('-A fw-interfaces -i {network[interface]} ! -s {network[ip]}/{network[range]} -j LOGDROP\n'.format(network=network))
-            f.write('-A fw-open -s {network[ip]}/{network[range]} -d {network[ip]}/{network[range]} -j ACCEPT\n'.format(network=network))
-
-        f.write("COMMIT\n")
-        with open('iptables-nat.rules', 'r') as tpl:
-            f.write(tpl.read())
-
-        for network in config['networks']:
-            if network.get('nat'):
-                for public_if in public_interfaces:
-                    f.write('-A POSTROUTING -s {network[ip]}/{network[range]} -o {public_if} -j MASQUERADE\n'.format(network=network, public_if=public_if))
-                f.write('-A PREROUTING -d {public_ip} -s {network[ip]}/{network[range]} -j INCOMING\n'.format(public_ip=public_ip, network=network))
-
-        for public_if in public_interfaces:
-            f.write('-A PREROUTING -i {public_if} -j INCOMING\n'.format(public_if=public_if))
-
-        f.write(nat)
-        f.write("COMMIT\n")
-
-if __name__ == "__main__":
-    with open('config.json') as f:
-        config = json.load(f)
-
-    apply(config, '')
     subprocess.call('systemctl restart iptables', shell=True)
     subprocess.call('systemctl restart dnsmasq', shell=True)

@@ -1,0 +1,15 @@
+plugin rp-pppoe.so
+# rp_pppoe_ac 'your ac name'
+# rp_pppoe_service 'your service name'
+# network interface
+{{ interface.parent }}
+# login name
+name "{{ interface.username }}"
+usepeerdns
+persist
+# Uncomment this if you want to enable dial on demand
+#demand
+#idle 180
+defaultroute
+hide-password
+noauth

@@ -1,0 +1,8 @@
+127.0.0.1                   localhost.localdomain	localhost
+::1	                        localhost.localdomain	localhost
+{{ config.public_ip }}      {{ config.public_host }}
+!for network in config.networks
+    !for host in network.hosts if host.name
+        {{ host.ip }}       {{ host.name }}
+    !endfor
+!endfor

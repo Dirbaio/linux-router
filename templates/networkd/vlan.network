@@ -1,0 +1,6 @@
+[Match]
+Name={{ interface.name }}
+[Network]
+!for i in config.interfaces if i.type == 'vlan' and i.parent == interface.name:
+    VLAN={{ i.name }}
+!endfor

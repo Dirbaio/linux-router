@@ -1,0 +1,11 @@
+[Unit]
+Description=PPP link to %I
+Before=network.target
+
+[Service]
+ExecStart=/usr/bin/sh -c 'sleep 1 && /usr/sbin/pppd call %I nodetach nolog'
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

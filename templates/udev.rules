@@ -1,0 +1,3 @@
+!for iface in config.interfaces if iface.type == 'hardware'
+    SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ iface.mac }}", NAME="{{ iface.name }}"
+!endfor

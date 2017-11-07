@@ -1,0 +1,6 @@
+[NetDev]
+Name={{ interface.name }}
+Kind=vlan
+
+[VLAN]
+Id={{ interface.vlan }}

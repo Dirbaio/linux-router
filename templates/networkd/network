@@ -1,0 +1,13 @@
+
+[Match]
+Name={{ network.interface }}
+
+[Network]
+IPForward=yes
+
+[Address]
+Address={{ network.ip }}/{{ network.range }}
+!if network.gateway
+    [Route]
+    Gateway={{ network.gateway }}
+!endif

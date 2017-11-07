@@ -5,25 +5,19 @@
     "public_interfaces": ["ppp0"],
     "interfaces": [
         {
-            "name": "external0",
+            "name": "wan0",
             "type": "hardware",
             "mac": "60:e3:27:03:30:3a"
         },
         {
-            "name": "external0.6",
-            "type": "vlan",
-            "vlan": 6,
-            "parent": "external0"
-        },
-        {
             "name": "ppp0",
             "type": "pppoe",
-            "parent": "external0.6",
+            "parent": "wan0",
             "username": "adslppp@telefonicanetpa",
             "password": "adslppp"
         },
         {
-            "name": "internal0",
+            "name": "lan0",
             "type": "hardware",
             "mac": "d0:50:99:52:e5:f3"
         }
@@ -32,9 +26,10 @@
     "networks": [
         {
             "name": "main",
-            "interface": "internal0",
+            "interface": "lan0",
             "range": "16",
             "ip": "10.10.0.1",
+            "nat": true,
             "dhcp": {
                 "start": "10.10.0.100",
                 "end": "10.10.0.200"
