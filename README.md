@@ -1,4 +1,5 @@
 # linux-router
+
 Python script that configures a linux router.
 
 The script takes a JSON config and writes config files for udev, systemd-networkd, dnsmasq, /etc/hosts, iptables, pppd.
