@@ -10,7 +10,7 @@ env = Environment(
     line_statement_prefix="!",
 )
 
-root = 'new'
+root = '/'
 
 def render_template(src, dst, **kwargs):
     dst = root + dst
@@ -29,10 +29,20 @@ def render_template(src, dst, **kwargs):
 
     with open(dst, 'wt') as f:
         res = env.get_template(src).render(**kwargs)
-        res = '\n'.join((l.strip() for l in res.split('\n')))
-        if res[-1:] != '\n':
-            res += '\n'
-        f.write(res)
+        indent = 0
+        for l in res.split('\n'):
+            nopen = l.count('{') + l.count('(')
+            nclose = l.count('}') + l.count(')')
+
+            if nopen == 0:
+                indent -= nclose
+
+            f.write('    '*indent)
+            f.write(l.strip())
+            f.write('\n')
+
+            if nopen != 0:
+                indent += nopen-nclose
 
 if __name__ == "__main__":
     with open('config.json', 'r') as f:
@@ -84,7 +94,7 @@ if __name__ == "__main__":
     render_template('resolv.conf', '/etc/resolv.conf')
     render_template('hosts', '/etc/hosts')
     render_template('dnsmasq.conf', '/etc/dnsmasq.conf')
-    render_template('iptables.rules', '/etc/iptables/iptables.rules')
+    render_template('nftables.conf', '/etc/nftables.conf')
 
-    subprocess.call('systemctl restart iptables', shell=True)
+    subprocess.call('systemctl restart nftables', shell=True)
     subprocess.call('systemctl restart dnsmasq', shell=True)
